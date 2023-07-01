@@ -440,7 +440,7 @@ fix-nginx-symlinks() {
   echo
   echo "-> Creating symlinks for use with kvmd python scripts"
   if [ ! -e /usr/bin/nginx ]; then ln -sf /usr/sbin/nginx /usr/bin/; fi
-  if [ ! -e /usr/sbin/python ]; then ln -sf /usr/bin/python3 /usr/sbin/python; fi
+  if [ ! -e /usr/sbin/python ]; then ln -sf /usr/bin/python /usr/sbin/python; fi
   if [ ! -e /usr/bin/iptables ]; then ln -sf /usr/sbin/iptables /usr/bin/iptables; fi
   if [ ! -e /usr/bin/vcgencmd ]; then ln -sf /opt/vc/bin/* /usr/bin/; fi
 
@@ -460,6 +460,7 @@ fix-python-symlinks(){
     # Debian python版本比 pikvm官方的低一些
     ln -sf /usr/lib/python3.1*/site-packages/kvmd* ${PYTHONDIR}
   fi
+  sed -i 's@#!/usr/bin/python@#!/usr/bin/env python@g' /usr/bin/kvmd*
 }
 
 apply-custom-patch(){
