@@ -676,6 +676,7 @@ else
   fix-webterm
   fix-motd
   fix-nfs-msd
+  echo "/dev/mmcblk0p2  /var/lib/kvmd/msd   ext4  nodev,nosuid,noexec,ro,errors=remount-ro,data=journal,X-kvmd.otgmsd-root=/var/lib/kvmd/msd,X-kvmd.otgmsd-user=kvmd  0  0" >> /etc/fstab
   set-ownership
   create-kvmdfix
   check-kvmd-works
