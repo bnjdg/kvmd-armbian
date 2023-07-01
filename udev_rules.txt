@@ -1,11 +1,10 @@
 switcher
     ATTRS{idProduct}=="7523", ATTRS{idVendor}=="1a86", 
 
+KERNEL=="ttyUSB*", SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="kvmd-switcher"
+
 serial
     ATTRS{idProduct}=="ea60", ATTRS{idVendor}=="10c4", 
 
-KERNEL=="ttyUSB*", SUBSYSTEM=="tty",ATTRS{idProduct}=="ea60", ATTRS{idVendor}=="10c4", SYMLINK
-
-KERNEL=="ttyUSB*", SUBSYSTEM=="tty", ATTRS{idProduct}=="7523", ATTRS{idVendor}=="1a86", GROUP="kvmd", SYMLINK+="kvmd-switcher"
-KERNEL=="ttyUSB*", SUBSYSTEM=="tty", ATTRS{idProduct}=="ea60", ATTRS{idVendor}=="10c4", GROUP="kvmd", SYMLINK+="kvmd-hid"
+KERNEL=="ttyUSB*", SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="kvmd-hid"
 
