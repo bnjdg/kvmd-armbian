@@ -46,6 +46,8 @@ save-configs() {
   # Save mouse settings (in case you changed move freq to 10ms from 100ms)
   cp /usr/share/kvmd/web/share/js/kvm/mouse.js /usr/share/kvmd/web/share/js/kvm/mouse.js.save
 
+  cp /etc/kvmd/nginx/listen-https.conf /etc/kvmd/nginx/listen-https.conf.save
+  
   cp /usr/lib/python3/dist-packages/kvmd/plugins/ugpio/gpio.py /usr/lib/python3/dist-packages/kvmd/plugins/ugpio/gpio.py.save
   cp /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/hw.py /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/hw.py.save
   cp /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/base.py /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/base.py.save
@@ -72,6 +74,8 @@ restore-configs() {
   # Restore mouse settings (in case you changed move freq to 10ms from 100ms)
   cp /usr/share/kvmd/web/share/js/kvm/mouse.js.save /usr/share/kvmd/web/share/js/kvm/mouse.js
 
+  cp /etc/kvmd/nginx/listen-https.conf.save /etc/kvmd/nginx/listen-https.conf
+  
   cp /usr/lib/python3/dist-packages/kvmd/plugins/ugpio/gpio.py.save /usr/lib/python3/dist-packages/kvmd/plugins/ugpio/gpio.py
   cp /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/hw.py.save /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/hw.py
   cp /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/base.py.save /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/base.py
@@ -235,6 +239,55 @@ fix-nfs-msd() {
   ls -ld aiofiles*
 }
 
+fix-nginx() {
+  #set -x
+  KERNEL=$( uname -r | awk -F\- '{print $1}' )
+  ARCH=$( uname -r | awk -F\- '{print $NF}' )
+  echo "KERNEL:  $KERNEL   ARCH:  $ARCH"
+  case $ARCH in
+    ARCH) SEARCHKEY=nginx-mainline;;
+    *) SEARCHKEY="nginx/";;
+  esac
+
+  HTTPSCONF="/etc/kvmd/nginx/listen-https.conf"
+  echo "HTTPSCONF BEFORE:  $HTTPSCONF"
+  cat $HTTPSCONF
+
+  if [[ ! -e /usr/local/bin/pikvm-info || ! -e /tmp/pacmanquery ]]; then
+    wget -O /usr/local/bin/pikvm-info https://kvmnerds.com/PiKVM/pikvm-info 2> /dev/null
+    chmod +x /usr/local/bin/pikvm-info
+    echo "Getting list of packages installed..."
+    pikvm-info > /dev/null    ### this generates /tmp/pacmanquery with list of installed pkgs
+  fi
+
+  NGINXVER=$( grep $SEARCHKEY /tmp/pacmanquery | awk '{print $1}' | cut -d'.' -f1,2 )
+  echo
+  echo "NGINX version installed:  $NGINXVER"
+
+  case $NGINXVER in
+    1.2[56789]|1.3*|1.4*|1.5*)   # nginx version 1.25 and higher
+      cat << NEW_CONF > $HTTPSCONF
+listen 443 ssl;
+listen [::]:443 ssl;
+http2 on;
+NEW_CONF
+      ;;
+
+    1.18|*)   # nginx version 1.18 and lower
+      cat << ORIG_CONF > $HTTPSCONF
+listen 443 ssl http2;
+listen [::]:443 ssl;
+ORIG_CONF
+      ;;
+
+  esac
+
+  echo "HTTPSCONF AFTER:  $HTTPSCONF"
+  cat $HTTPSCONF
+  set +x
+} # end fix-nginx
+
+
 
 ### MAIN STARTS HERE ###
 PYTHONPACKAGES=$( ls -ld /usr/lib/python3*/dist-packages | awk '{print $NF}' | tail -1 )
@@ -255,6 +308,7 @@ update-logo
 misc-fixes
 fix-python311
 fix-nfs-msd
+fix-nginx
 
 ln -sf python3 /usr/bin/python
 

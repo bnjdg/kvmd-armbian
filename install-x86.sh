@@ -17,8 +17,8 @@
 '
 # NOTE:  This was tested on a new install of raspbian desktop and lite versions, but should also work on an existing install.
 #
-# Last change 20230201 1025 PDT
-# VER=2.1
+# Last change 20230630 0945 PDT
+# VER=3.0
 set +x
 PIKVMREPO="https://files.pikvm.org/repos/arch/rpi4"
 KVMDCACHE="/var/cache/kvmd"
@@ -142,7 +142,7 @@ install-tc358743() {
   curl https://www.linux-projects.org/listing/uv4l_repo/lpkey.asc | apt-key add -
   echo "deb https://www.linux-projects.org/listing/uv4l_repo/raspbian/stretch stretch main" | tee /etc/apt/sources.list.d/uv4l.list
 
-  apt update > /dev/null
+  #apt-get update > /dev/null
   echo "apt-get install uv4l-tc358743-extras -y"
   apt-get install uv4l-tc358743-extras -y > /dev/null
 } # install package for tc358743
@@ -361,7 +361,7 @@ install-dependencies() {
   echo
   echo "-> Installing dependencies for pikvm"
 
-  apt update > /dev/null
+  #apt-get update > /dev/null
   echo "DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev lm-sensors"
   DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev lm-sensors
 
@@ -679,12 +679,64 @@ apply-x86-mods() {
   fi
 }
 
+fix-nginx() {
+  #set -x
+  KERNEL=$( uname -r | awk -F\- '{print $1}' )
+  ARCH=$( uname -r | awk -F\- '{print $NF}' )
+  echo "KERNEL:  $KERNEL   ARCH:  $ARCH"
+  case $ARCH in
+    ARCH) SEARCHKEY=nginx-mainline;;
+    *) SEARCHKEY="nginx/";;
+  esac
+
+  HTTPSCONF="/etc/kvmd/nginx/listen-https.conf"
+  echo "HTTPSCONF BEFORE:  $HTTPSCONF"
+  cat $HTTPSCONF
+
+  if [[ ! -e /usr/local/bin/pikvm-info || ! -e /tmp/pacmanquery ]]; then
+    wget -O /usr/local/bin/pikvm-info https://kvmnerds.com/PiKVM/pikvm-info 2> /dev/null
+    chmod +x /usr/local/bin/pikvm-info
+    echo "Getting list of packages installed..."
+    pikvm-info > /dev/null    ### this generates /tmp/pacmanquery with list of installed pkgs
+  fi
+
+  NGINXVER=$( grep $SEARCHKEY /tmp/pacmanquery | awk '{print $1}' | cut -d'.' -f1,2 )
+  echo
+  echo "NGINX version installed:  $NGINXVER"
+
+  case $NGINXVER in
+    1.2[56789]|1.3*|1.4*|1.5*)   # nginx version 1.25 and higher
+      cat << NEW_CONF > $HTTPSCONF
+listen 443 ssl;
+listen [::]:443 ssl;
+http2 on;
+NEW_CONF
+      ;;
+
+    1.18|*)   # nginx version 1.18 and lower
+      cat << ORIG_CONF > $HTTPSCONF
+listen 443 ssl http2;
+listen [::]:443 ssl;
+ORIG_CONF
+      ;;
+
+  esac
+
+  echo "HTTPSCONF AFTER:  $HTTPSCONF"
+  cat $HTTPSCONF
+  set +x
+} # end fix-nginx
+
 
 
 ### MAIN STARTS HERE ###
 # Install is done in two parts
 # First part requires a reboot in order to create kvmd users and groups
 # Second part will start the necessary kvmd services
+
+### fix for kvmd 3.230 and higher
+ln -sf python3 /usr/bin/python
+
 # added option to re-install by adding -f parameter (for use as platform switcher)
 PYTHON_VERSION=$( python3 -V | awk '{print $2}' | cut -d'.' -f1,2 )
 if [[ $( grep kvmd /etc/passwd | wc -l ) -eq 0 || "$1" == "-f" ]]; then
@@ -725,6 +777,7 @@ else
   fix-webterm
   fix-motd
   fix-nfs-msd
+  fix-nginx
   set-ownership
   create-kvmdfix
   add-ch9329-support
