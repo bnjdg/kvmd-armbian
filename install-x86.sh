@@ -370,7 +370,7 @@ install-dependencies() {
   if [[ "$PYTHONVER" == "3.11" ]]; then
     DEBIAN_FRONTEND=noninteractive apt install -y python3-dbus-next python3-zstandard
   else
-    pip3 install dbus_next zstandard
+    pip3 install --break-system-packages dbus_next zstandard
   fi
 
   echo "-> Make tesseract data link"
@@ -766,6 +766,56 @@ ORIG_CONF
   set +x
 } # end fix-nginx
 
+ocr-fix() {  # create function
+  echo
+  echo "-> Apply OCR fix..."
+
+  # 1.  verify that Pillow module is currently running 9.0.x
+  PILLOWVER=$( pip3 list | grep -i pillow | awk '{print $NF}' )
+
+  case $PILLOWVER in
+    9.*|8.*|7.*)   # Pillow running at 9.x and lower
+      # 2.  update Pillow to 10.0.0
+      pip3 install -U Pillow 2> /dev/null
+
+      # 3.  check that Pillow module is now running 10.0.0
+      pip3 list | grep -i pillow
+
+      #4.  restart kvmd and confirm OCR now works.
+      systemctl restart kvmd
+      ;;
+
+    10.*|11.*|12.*)  # Pillow running at 10.x and higher
+      echo "Already running Pillow $PILLOWVER.  Nothing to do."
+      ;;
+
+  esac
+
+  echo
+} # end ocr-fix
+
+x86-fix-3.256() {
+  echo "-> Apply x86-fix for 3.256 and higher..."
+  cd /usr/lib/python3/dist-packages/kvmd/apps/
+  cp __init__.py __init__.py.$( date +%Y%m%d )
+  wget https://raw.githubusercontent.com/pikvm/kvmd/cec03c4468df87bcdc68f20c2cf51a7998c56ebd/kvmd/apps/__init__.py 2> /dev/null
+  mv __init__.py.1 __init__.py
+
+  cd /usr/share/kvmd/web/share/js
+  if [ -e session.js ]; then
+    cp session.js session.js.$( date +%Y%m%d )
+  fi
+  wget https://raw.githubusercontent.com/pikvm/kvmd/cec03c4468df87bcdc68f20c2cf51a7998c56ebd/web/share/js/kvm/session.js 2> /dev/null
+  if [ -e session.js.1 ]; then
+    mv session.js.1 session.js
+  fi
+
+  cd /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/
+  cp hw.py hw.py.$( date +%Y%m%d )
+  #wget https://raw.githubusercontent.com/pikvm/kvmd/cec03c4468df87bcdc68f20c2cf51a7998c56ebd/kvmd/apps/kvmd/info/hw.py 2> /dev/null
+  #mv hw.py.1 hw.py
+  wget -O hw.py https://kvmnerds.com/PiKVM/TESTING/hw.py 2> /dev/null
+} # end x86-fix-3.256
 
 
 ### MAIN STARTS HERE ###
@@ -813,7 +863,7 @@ else
   systemd-sysusers /usr/lib/sysusers.d/kvmd-webterm.conf
 
   ### additional python pip dependencies for kvmd 3.238 and higher
-  pip3 install async-lru 2> /dev/null
+  pip3 install --break-system-packages async-lru 2> /dev/null
 
   fix-nginx-symlinks
   fix-python-symlinks
@@ -821,10 +871,13 @@ else
   fix-motd
   fix-nfs-msd
   fix-nginx
+  ocr-fix
+  
   set-ownership
   create-kvmdfix
   if [ ! -e ${LOCATION}/kvmd/plugins/hid/ch9329 ]; then add-ch9329-support; fi    # starting with kvmd 3.239, ch9329 has been merged with kvmd master
   apply-x86-mods
+  x86-fix-3.256
   check-kvmd-works
   enable-kvmd-svcs
   start-kvmd-svcs

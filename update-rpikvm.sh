@@ -3,13 +3,14 @@
 ## Update script for Raspbian/Armbian
 #
 ###
-# Updated on 20230628 1930PDT
+# Updated on 20230914 1100PDT
 ###
 PIKVMREPO="https://pikvm.org/repos/rpi4"
 PIKVMREPO="https://files.pikvm.org/repos/arch/rpi4/"    # as of 11/05/2021
 KVMDCACHE="/var/cache/kvmd"
 PKGINFO="${KVMDCACHE}/packages.txt"
 REPOFILE="/tmp/pikvmrepo.html"; /bin/rm -f $REPOFILE
+ln -sf python3 /usr/bin/python
 
 get-packages() {
   printf "\n-> Getting newest Pi-KVM packages from ${PIKVMREPO}\n\n"
@@ -188,8 +189,16 @@ update-logo() {
 misc-fixes() {
   printf "\n-> Misc fixes: python dependencies for 2FA function\n"
   set -x
-  ### pyotp and qrcode is required for 3.196 and higher (for use with 2FA)
-  pip3 install --break-system-packages pyotp qrcode 2> /dev/null
+
+  PIP3LIST="/tmp/pip3.list"
+  if [ ! -e $PIP3LIST ]; then pip3 list > $PIP3LIST ; fi
+
+  if [ $( egrep -c 'pyotp|qrcode' $PIP3LIST ) -eq 0 ]; then
+    ### pyotp and qrcode is required for 3.196 and higher (for use with 2FA)
+    pip3 install --break-system-packages pyotp qrcode 2> /dev/null
+  else
+    echo "pip3 modules pyotp and qrcode already installed"
+  fi
 
   TOTPFILE="/etc/kvmd/totp.secret"
   if [ -e $TOTPFILE ]; then
@@ -205,11 +214,12 @@ misc-fixes() {
 
 fix-python311() {
   printf "\n-> python3.11 kvmd path fix\n\n"
-  cd /usr/lib/python3/dist-packages/; ls -ld kvmd*
+  cd /usr/lib/python3/dist-packages/
+  ls -ld kvmd
+  ls -ld kvmd-[0-9]* | tail -2  # show last 2 kvmd-*info links
 
   if [ $( ls -ld kvmd | grep -c 3.10 ) -gt 0 ]; then
     ln -sf /usr/lib/python3.11/site-packages/kvmd .
-    ls -ld kvmd*
   else
     printf "\nkvmd is already symlinked to python3.11 version.  Nothing to do.\n"
   fi
@@ -218,19 +228,21 @@ fix-python311() {
 fix-nfs-msd() {
   NAME="aiofiles.tar"
   wget -O $NAME https://kvmnerds.com/RPiKVM/$NAME 2> /dev/null
-  
+
   LOCATION="/usr/lib/python3.11/site-packages"
   echo "-> Extracting $NAME into $LOCATION"
-  tar xvf $NAME -C $LOCATION
+  tar xvf $NAME -C $LOCATION > /dev/null
 
   echo "-> Renaming original aiofiles and creating symlink to correct aiofiles"
   cd /usr/lib/python3/dist-packages
   mv aiofiles aiofiles.$(date +%Y%m%d.%H%M)
-  ln -s $LOCATION/aiofiles .
-  ls -ld aiofiles*
+  ln -sf $LOCATION/aiofiles .
+  ls -ltrd aiofiles* | tail -2
 }
 
 fix-nginx() {
+  echo
+  echo "-> Applying NGINX fix..."
   #set -x
   KERNEL=$( uname -r | awk -F\- '{print $1}' )
   ARCH=$( uname -r | awk -F\- '{print $NF}' )
@@ -278,6 +290,33 @@ ORIG_CONF
   set +x
 } # end fix-nginx
 
+ocr-fix() {  # create function
+  echo
+  echo "-> Apply OCR fix for board with $RAM RAM..."
+
+  # 1.  verify that Pillow module is currently running 9.0.x
+  PILLOWVER=$( grep -i pillow $PIP3LIST | awk '{print $NF}' )
+
+  case $PILLOWVER in
+    9.*|8.*|7.*)   # Pillow running at 9.x and lower
+      # 2.  update Pillow to 10.0.0
+      pip3 install -U Pillow 2> /dev/null
+
+      # 3.  check that Pillow module is now running 10.0.0
+      pip3 list | grep -i pillow
+
+      #4.  restart kvmd and confirm OCR now works.
+      systemctl restart kvmd
+      ;;
+
+    10.*|11.*|12.*)  # Pillow running at 10.x and higher
+      echo "Already running Pillow $PILLOWVER.  Nothing to do."
+      ;;
+
+  esac
+
+  echo
+} # end ocr-fix
 
 
 ### MAIN STARTS HERE ###
@@ -301,10 +340,25 @@ fix-python311
 fix-nfs-msd
 fix-nginx
 
-ln -sf python3 /usr/bin/python
+RAM=$( pistat | grep '^#' | awk '{print $NF}' )
+RAMMB=$( echo $RAM | sed -e 's/MB/*1/g' -e 's/GB/*1024/g' | bc )  # convert all RAM to MB
+if [ $RAMMB -gt 256 ]; then
+  # RAM > 256MB so we can support OCR (and perform OCR-fix)
+  ocr-fix
+else
+  echo
+  echo "-> Too low RAM [ $RAM ] onboard to support OCR.  Removing tesseract packages"
+  apt remove -y tesseract-ocr tesseract-ocr-eng > /dev/null 2> /dev/null
+  echo
+fi
 
 ### additional python pip dependencies for kvmd 3.238 and higher
-pip3 install --break-system-packages async-lru 2> /dev/null
+echo "-> Applying kvmd 3.238 and higher fix..."
+if [ $( grep -c async-lru $PIP3LIST ) -eq 0 ]; then
+  pip3 install --break-system-packages async-lru 2> /dev/null
+else
+  grep async-lru $PIP3LIST
+fi
 
 ### add ms unit of measure to Polling rate in webui ###
 sed -i -e 's/ interval:/ interval (ms):/g' /usr/share/kvmd/web/kvm/index.html

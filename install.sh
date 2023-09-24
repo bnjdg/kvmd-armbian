@@ -359,7 +359,7 @@ install-dependencies() {
   if [[ "$PYTHONVER" == "3.11" ]]; then
     DEBIAN_FRONTEND=noninteractive apt install -y python3-dbus-next python3-zstandard
   else
-    pip3 install dbus_next zstandard
+    pip3 install --break-system-packages dbus_next zstandard
   fi
 
   echo "-> Make tesseract data link"
@@ -682,6 +682,33 @@ ORIG_CONF
   set +x
 } # end fix-nginx
 
+ocr-fix() {  # create function
+  echo
+  echo "-> Apply OCR fix..."
+
+  # 1.  verify that Pillow module is currently running 9.0.x
+  PILLOWVER=$( pip3 list | grep -i pillow | awk '{print $NF}' )
+
+  case $PILLOWVER in
+    9.*|8.*|7.*)   # Pillow running at 9.x and lower
+      # 2.  update Pillow to 10.0.0
+      pip3 install -U Pillow 2> /dev/null
+
+      # 3.  check that Pillow module is now running 10.0.0
+      pip3 list | grep -i pillow
+
+      #4.  restart kvmd and confirm OCR now works.
+      systemctl restart kvmd
+      ;;
+
+    10.*|11.*|12.*)  # Pillow running at 10.x and higher
+      echo "Already running Pillow $PILLOWVER.  Nothing to do."
+      ;;
+
+  esac
+
+  echo
+} # end ocr-fix
 
 
 ### MAIN STARTS HERE ###
@@ -736,6 +763,8 @@ else
   fix-motd
   fix-nfs-msd
   fix-nginx
+  ocr-fix
+  
   set-ownership
   create-kvmdfix
   check-kvmd-works
