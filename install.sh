@@ -76,8 +76,15 @@ create-override() {
       cat <<USBOVERRIDE >> /etc/kvmd/override.yaml
 kvmd:
     hid:
+        ### use Pico HID in serial mode 
         type: serial
         device: /dev/kvmd-hid
+        gpio_device: /dev/gpiochip1
+        reset_pin: 6
+        reset_inverted: true
+        reset_self: true
+        power_detect_pin: 1
+        power_detect_pull_down: true
     atx:
         type: disabled
     streamer:
@@ -93,8 +100,15 @@ USBOVERRIDE
       cat <<CSIOVERRIDE >> /etc/kvmd/override.yaml
 kvmd:
     hid:
+        ### use Pico HID in serial mode 
         type: serial
         device: /dev/kvmd-hid
+        gpio_device: /dev/gpiochip1
+        reset_pin: 6
+        reset_inverted: true
+        reset_self: true
+        power_detect_pin: 1
+        power_detect_pull_down: true
     streamer:
         forever: true
         cmd_append:

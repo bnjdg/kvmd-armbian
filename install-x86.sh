@@ -76,10 +76,14 @@ create-override() {
       cat <<USBOVERRIDE >> /etc/kvmd/override.yaml
 kvmd:
     hid:
-        ### add entries for use with the ch9329 serial HID
-        type: ch9329
-        speed: 9600     # default speed after loading ch9329 plugin is 9600
+        ### use Pico HID in serial mode 
+        type: serial
         device: /dev/kvmd-hid
+        reset_pin: 6
+        reset_inverted: true
+        reset_self: true
+        power_detect_pin: 1
+        power_detect_pull_down: true
     msd:
         type: disabled
     atx:
@@ -97,10 +101,14 @@ USBOVERRIDE
       cat <<CSIOVERRIDE >> /etc/kvmd/override.yaml
 kvmd:
     hid:
-        ### add entries for use with the ch9329 serial HID
-        type: ch9329
-        speed: 9600     # default speed after loading ch9329 plugin is 9600
+        ### use Pico HID in serial mode 
+        type: serial
         device: /dev/kvmd-hid
+        reset_pin: 6
+        reset_inverted: true
+        reset_self: true
+        power_detect_pin: 1
+        power_detect_pull_down: true
     msd:
         type: disabled
     streamer:
