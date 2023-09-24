@@ -142,7 +142,7 @@ install-tc358743() {
   curl https://www.linux-projects.org/listing/uv4l_repo/lpkey.asc | apt-key add -
   echo "deb https://www.linux-projects.org/listing/uv4l_repo/raspbian/stretch stretch main" | tee /etc/apt/sources.list.d/uv4l.list
 
-  #apt-get update > /dev/null
+  apt update > /dev/null
   echo "apt-get install uv4l-tc358743-extras -y"
   apt-get install uv4l-tc358743-extras -y > /dev/null
 } # install package for tc358743
@@ -361,7 +361,6 @@ install-dependencies() {
   echo
   echo "-> Installing dependencies for pikvm"
 
-  #apt-get update > /dev/null
   echo "DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev lm-sensors"
   DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev lm-sensors
 
@@ -530,6 +529,11 @@ ENDSERVICE
 ### These fixes are required in order for kvmd service to start properly
 #
 set -x
+
+# create this dir so that running kvmd-otgconf doesn't give errors
+mkdir -p /run/kvmd/otg
+/root/ch_reset.py
+
 if [ \$( ls /dev/ | grep -c gpio ) -gt 0 ]; then
   chgrp gpio /dev/gpio*
   chmod 660 /dev/gpio*
@@ -567,6 +571,41 @@ fi
 SCRIPTEND
 
   chmod +x /usr/bin/kvmd-fix
+
+  cat << CHRESET > /root/ch_reset.py
+#!/usr/bin/python3
+import serial
+import time
+
+device_path = "/dev/kvmd-hid"
+
+chip = serial.Serial(device_path, 9600, timeout=1)
+
+command = [87, 171, 0, 15, 0]
+sum = sum(command) % 256
+command.append(sum)
+
+print("Resetting CH9329")
+
+chip.write(serial.to_bytes(command))
+
+time.sleep(2)
+
+data = list(chip.read(5))
+
+print("Initial data:", data)
+
+if data[4] :
+        more_data = list(chip.read(data[4]))
+        data.extend(more_data)
+
+print("Output: ", data)
+
+
+chip.close()
+CHRESET
+
+  chmod +x /root/ch_reset.py
 } # end create-kvmdfix
 
 set-ownership() {
@@ -736,6 +775,7 @@ ORIG_CONF
 
 ### fix for kvmd 3.230 and higher
 ln -sf python3 /usr/bin/python
+GPUMEM=256
 
 # added option to re-install by adding -f parameter (for use as platform switcher)
 PYTHON_VERSION=$( python3 -V | awk '{print $2}' | cut -d'.' -f1,2 )
@@ -772,6 +812,9 @@ else
   systemd-sysusers /usr/lib/sysusers.d/kvmd.conf
   systemd-sysusers /usr/lib/sysusers.d/kvmd-webterm.conf
 
+  ### additional python pip dependencies for kvmd 3.238 and higher
+  pip3 install async-lru 2> /dev/null
+
   fix-nginx-symlinks
   fix-python-symlinks
   fix-webterm
@@ -780,7 +823,7 @@ else
   fix-nginx
   set-ownership
   create-kvmdfix
-  add-ch9329-support
+  if [ ! -e ${LOCATION}/kvmd/plugins/hid/ch9329 ]; then add-ch9329-support; fi    # starting with kvmd 3.239, ch9329 has been merged with kvmd master
   apply-x86-mods
   check-kvmd-works
   enable-kvmd-svcs
@@ -814,3 +857,6 @@ sed -i -e "s/localhost.localdomain/`hostname`/g" /etc/kvmd/meta.yaml
 
 ### restore htpasswd from previous install, if applies
 if [ -e /etc/kvmd/htpasswd.save ]; then cp /etc/kvmd/htpasswd.save /etc/kvmd/htpasswd; fi
+
+### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
+sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js

@@ -189,7 +189,7 @@ misc-fixes() {
   printf "\n-> Misc fixes: python dependencies for 2FA function\n"
   set -x
   ### pyotp and qrcode is required for 3.196 and higher (for use with 2FA)
-  pip3 install pyotp qrcode 2> /dev/null
+  pip3 install --break-system-packages pyotp qrcode 2> /dev/null
 
   TOTPFILE="/etc/kvmd/totp.secret"
   if [ -e $TOTPFILE ]; then
@@ -303,6 +303,9 @@ fix-nginx
 
 ln -sf python3 /usr/bin/python
 
+### additional python pip dependencies for kvmd 3.238 and higher
+pip3 install --break-system-packages async-lru 2> /dev/null
+
 ### add ms unit of measure to Polling rate in webui ###
 sed -i -e 's/ interval:/ interval (ms):/g' /usr/share/kvmd/web/kvm/index.html
 
@@ -315,3 +318,6 @@ if systemctl is-enabled -q kvmd; then
 else
   printf "\nkvmd service is disabled.  Not starting service\n"
 fi
+
+### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
+sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js

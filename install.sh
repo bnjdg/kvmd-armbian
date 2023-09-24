@@ -347,7 +347,11 @@ install-dependencies() {
 
   #apt-get update > /dev/null
   echo "DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev"
+<<<<<<< HEAD
   DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev
+=======
+  DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev > /dev/null
+>>>>>>> a990ad48ce2a1f86d845d72862c4da3aa7b65bdd
 
   install-python-packages
 
@@ -723,6 +727,9 @@ else
   systemd-sysusers /usr/lib/sysusers.d/kvmd.conf
   systemd-sysusers /usr/lib/sysusers.d/kvmd-webterm.conf
 
+  ### additional python pip dependencies for kvmd 3.238 and higher
+  pip3 install --break-system-packages async-lru 2> /dev/null
+
   fix-nginx-symlinks
   fix-python-symlinks
   fix-webterm
@@ -763,3 +770,6 @@ sed -i -e "s/localhost.localdomain/`hostname`/g" /etc/kvmd/meta.yaml
 
 ### restore htpasswd from previous install, if applies
 if [ -e /etc/kvmd/htpasswd.save ]; then cp /etc/kvmd/htpasswd.save /etc/kvmd/htpasswd; fi
+
+### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
+sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js
