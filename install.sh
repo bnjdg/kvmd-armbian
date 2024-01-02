@@ -26,7 +26,6 @@ PKGINFO="${KVMDCACHE}/packages.txt"
 APP_PATH=$(readlink -f $(dirname $0))
 export DEBIAN_FRONTEND=noninteractive
 LOGFILE="${KVMDCACHE}/installer.log"; touch $LOGFILE; echo "==== $( date ) ====" >> $LOGFILE
-
 cm4=0   # variable to take care of CM4 specific changes
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
@@ -848,7 +847,6 @@ ocr-fix() {  # create function
 async-lru-fix() {
   echo
   echo "-> Ensuring async-lru is installed with version 2.x ..." | tee -a $LOGFILE
-  pip3 install async-lru 2> /dev/null
   PIP3LIST="/tmp/pip3.list"; /bin/rm -f $PIP3LIST
   pip3 list 2> /dev/null > $PIP3LIST
 
