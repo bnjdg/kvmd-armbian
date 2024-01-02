@@ -11,6 +11,8 @@ Then run this script (2x) to install pikvm.
 
 Install script is a fork from @srepac raspbian pikvm install script.
 
+**NOTE:  all commands need to be run as root user.**
+
 Original Script [https://kvmnerds.com/RPiKVM/install-pikvm-raspbian.sh]
 
 # Hardware for kvmd-armbian project
@@ -38,7 +40,7 @@ overlays=usbhost0 usbhost1 usbhost2 usbhost3
 
 ## Step 3 - Perform part 1 of install
 ```
-apt update
+apt update && apt upgrade -y
 apt install -y git vim make python3-dev gcc
 git clone https://github.com/srepac/kvmd-armbian.git
 cd kvmd-armbian
@@ -77,4 +79,5 @@ update-rpikvm.sh
  - Inovato Quadra tv box (tested by @srepac)
  - Big Tree Tech CB1+Rpi4 board (WIP by @srepac)
  - Orange Pi PC+ and orange pi 3 (tested by @ducs4rs)
+ - RPi4B + PiKVM V3 HAT on Raspberry Pi OS bookworm (tested by @srepac on 10/19/23)
 
