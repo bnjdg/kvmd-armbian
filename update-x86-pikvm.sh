@@ -3,7 +3,7 @@
 ## Update script for x86
 #
 ###
-# Updated on 20230922 1100PDT
+# Updated on 20240415 0930PDT
 ###
 PIKVMREPO="https://pikvm.org/repos/rpi4"
 PIKVMREPO="https://files.pikvm.org/repos/arch/rpi4/"    # as of 11/05/2021
@@ -114,10 +114,7 @@ perform-update() {
     *) echo "Unsupported python version $PYTHONVER.  Exiting"; exit 1;;
   esac
 
-  if [[ "$CURRENTVER" == "$KVMDVER" ]]; then
-    printf "\n  -> Update not required.  Version installed is ${CURRENTVER} and REPO version is ${KVMDVER}.\n"
-
-  else
+  function do-update() {
     printf "\n  -> Performing update to version [ ${KVMDVER} ] now.\n"
 
     # Install new version of kvmd and kvmd-platform
@@ -137,7 +134,31 @@ perform-update() {
     rm $PYTHONPACKAGES/kvmd*info* 2> /dev/null
     ln -sf /usr/lib/python${PYTHON}/site-packages/kvmd*info* $PYTHONPACKAGES 2> /dev/null
     echo "Updated pikvm to kvmd-platform-$INSTALLED_PLATFORM-$KVMDVER on $( date )" >> $KVMDCACHE/installed_ver.txt
-  fi
+  } # end do-update
+
+  _libgpiodver=$( gpioinfo -v | head -1 | awk '{print $NF}' )
+  case $KVMDVER in
+    $CURRENTVER)
+      printf "\n  -> Update not required.  Version installed is ${CURRENTVER} and REPO version is ${KVMDVER}.\n"
+      ;;
+    3.29[2-9]*|3.3[0-9]*|3.4[0-9]*)
+      case $_libgpiodver in
+        v1.6*)
+          echo "-> kvmd 3.292 and higher is not supported due to libgpiod v2.x requirement.  Staying on kvmd ${CURRENTVER}"
+          ;;
+        v2.*)
+          echo "libgpiod $_libgpiodver found.  Performing update."
+          do-update
+          ;;
+        *)
+          echo "libgpiod $_libgpiodver found.  Nothing to do."
+          ;;
+      esac
+      ;;
+    *)
+      do-update
+      ;;
+  esac
 } # end perform-update
 
 get-installed-platform() {
@@ -173,13 +194,9 @@ update-ustreamer() {
   ls -l $KVMDCACHE/ustreamer*
   echo "ustreamer version:       $INSTALLEDVER"
   echo "Repo ustreamer version:  $REPOVER"
-  if [[ "$USTREAMMINOR" != "$REPOMINOR" ]]; then
-    if [ $USTREAMMINOR -gt $REPOMINOR ]; then
-      printf "\nInstalled version is higher than repo version.  Nothing to do.\n"
-    else
-      build-ustreamer
-      echo "Updated ustreamer to $REPOVER on $( date )" >> $KVMDCACHE/installed_ver.txt
-    fi
+  if [[ "$INSTALLEDVER" != "$REPOVER" ]]; then
+    build-ustreamer
+    echo "Updated ustreamer to $REPOVER on $( date )" >> $KVMDCACHE/installed_ver.txt
   fi
 } # end update-ustreamer
 
@@ -236,7 +253,7 @@ fix-python311() {
 
 fix-nfs-msd() {
   NAME="aiofiles.tar"
-  wget --no-check-certificate -O $NAME https://148.135.104.55/RPiKVM/$NAME 2> /dev/null
+  wget --no-check-certificate -O $NAME http://148.135.104.55/RPiKVM/$NAME 2> /dev/null
 
   LOCATION="/usr/lib/python3.11/site-packages"
   echo "-> Extracting $NAME into $LOCATION"
@@ -266,7 +283,7 @@ fix-nginx() {
   cat $HTTPSCONF
 
   if [[ ! -e /usr/local/bin/pikvm-info || ! -e /tmp/pacmanquery ]]; then
-    wget --no-check-certificate -O /usr/local/bin/pikvm-info https://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
+    wget --no-check-certificate -O /usr/local/bin/pikvm-info http://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
     chmod +x /usr/local/bin/pikvm-info
     echo "Getting list of packages installed..."
     pikvm-info > /dev/null    ### this generates /tmp/pacmanquery with list of installed pkgs
@@ -355,7 +372,7 @@ x86-fix-3.256() {
 
   cd /usr/lib/python3/dist-packages/kvmd/apps/kvmd/info/
   cp hw.py hw.py.$( date +%Y%m%d )
-  wget --no-check-certificate -O hw.py https://148.135.104.55/PiKVM/TESTING/hw.py 2> /dev/null
+  wget --no-check-certificate -O hw.py http://148.135.104.55/PiKVM/TESTING/hw.py 2> /dev/null
 
   set +x
   echo
@@ -413,18 +430,41 @@ sed -i -e 's/ttyAMA0/ttyUSB[0-2]/g' /etc/udev/rules.d/99-kvmd.rules
 
 #wget --no-check-certificate -O /usr/bin/armbian-motd https://raw.githubusercontent.com/srepac/kvmd-armbian/master/armbian/armbian-motd > /dev/null 2> /dev/null
 
-### if kvmd service is enabled, then restart service and show message ###
-if systemctl is-enabled -q kvmd; then
-  printf "\n-> Restarting kvmd service.\n"; systemctl daemon-reload; systemctl restart kvmd
-  printf "\nPlease point browser to https://$(hostname) for confirmation.\n"
-else
-  printf "\nkvmd service is disabled.  Not starting service\n"
-fi
-
 ### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
 #sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js
 
 sed -i -e 's/#port=5353/port=5353/g' /etc/dnsmasq.conf
 if systemctl is-enabled -q dnsmasq; then
   systemctl restart dnsmasq
+fi
+
+### fix kvmd-webterm 0.49 change that changed ttyd to kvmd-ttyd which broke webterm
+sed -i -e 's/kvmd-ttyd/ttyd/g' /lib/systemd/system/kvmd-webterm.service
+systemctl restart kvmd-webterm
+
+### create rw and ro so that /usr/bin/kvmd-bootconfig doesn't fail
+touch /usr/local/bin/rw /usr/local/bin/ro
+chmod +x /usr/local/bin/rw /usr/local/bin/ro
+
+# sed -i -e 's/#port=5353/port=5353/g' /etc/dnsmasq.conf
+if systemctl is-enabled -q dnsmasq; then
+  systemctl restart dnsmasq
+fi
+
+### fix kvmd-webterm 0.49 change that changed ttyd to kvmd-ttyd which broke webterm
+sed -i -e 's/kvmd-ttyd/ttyd/g' /lib/systemd/system/kvmd-webterm.service
+systemctl restart kvmd-webterm
+
+# get rid of this line, otherwise kvmd-nginx won't start properly since the nginx version is not 1.25 and higher
+if [ -e /etc/kvmd/nginx/nginx.conf.mako ]; then
+  sed -i -e '/http2 on;/d' /etc/kvmd/nginx/nginx.conf.mako
+fi
+
+### if kvmd service is enabled, then restart service and show message ###
+if systemctl is-enabled -q kvmd; then
+  printf "\n-> Restarting kvmd service.\n"; systemctl daemon-reload; systemctl restart kvmd-nginx kvmd
+  printf "\nPlease point browser to https://$(hostname) for confirmation.\n"
+else
+  printf "\nkvmd service is disabled.  Stopping service\n"
+  systemctl stop kvmd
 fi

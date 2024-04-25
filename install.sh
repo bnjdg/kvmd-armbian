@@ -17,16 +17,18 @@
 '
 # NOTE:  This was tested on a new install of raspbian desktop and lite versions, but should also work on an existing install.
 #
-# Last change 20231020 2100 PDT
-VER=3.3
+# Last change 20240116 1130 PDT
+VER=3.4
 set +x
 PIKVMREPO="https://files.pikvm.org/repos/arch/rpi4"
+KVMDFILE="kvmd-3.291-1-any.pkg.tar.xz"
 KVMDCACHE="/var/cache/kvmd"; mkdir -p $KVMDCACHE
 PKGINFO="${KVMDCACHE}/packages.txt"
 APP_PATH=$(readlink -f $(dirname $0))
-export DEBIAN_FRONTEND=noninteractive
 LOGFILE="${KVMDCACHE}/installer.log"; touch $LOGFILE; echo "==== $( date ) ====" >> $LOGFILE
+
 cm4=0   # variable to take care of CM4 specific changes
+csisvc=0  # variable to take care of starting CSI specific services
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
   echo "usage:  $0 [-f]   where -f will force re-install new pikvm platform"
@@ -51,8 +53,10 @@ case $PYTHONVER in
 esac
 
 ### added on 01/31/23 in case armbian is installed on rpi boards
-if [[ ! -e /boot/config.txt && -e /boot/firmware/config.txt ]]; then
-  ln -sf /boot/firmware/config.txt /boot/config.txt
+if [ -e /boot/firmware/config.txt ]; then
+  _BOOTCONF="/boot/firmware/config.txt"
+else
+  _BOOTCONF="/boot/config.txt"
 fi
 
 MAKER=$(tr -d '\0' < /proc/device-tree/model | awk '{print $1}')
@@ -71,6 +75,12 @@ gen-ssl-certs() {
   cd ${APP_PATH}
 } # end gen-ssl-certs
 
+enable-csi-svcs() {
+  if [ ${csisvc} -eq 1 ]; then
+    systemctl enable kvmd-tc358743 kvmd-janus-static
+  fi
+}
+
 create-override() {
   if [ $( grep ^kvmd: /etc/kvmd/override.yaml | wc -l ) -eq 0 ]; then
 
@@ -78,15 +88,10 @@ create-override() {
       cat <<USBOVERRIDE >> /etc/kvmd/override.yaml
 kvmd:
     hid:
-        ### use Pico HID in serial mode 
-        type: serial
-        device: /dev/kvmd-hid
-        gpio_device: /dev/gpiochip1
-        reset_pin: 6
-        reset_inverted: true
-        reset_self: true
-        power_detect_pin: 1
-        power_detect_pull_down: true
+        mouse_alt:
+            device: /dev/kvmd-hid-mouse-alt  # allow relative mouse mode
+    msd:
+        type: disabled
     atx:
         type: disabled
     streamer:
@@ -106,15 +111,10 @@ kvmd:
         fan:
             unix: ''
     hid:
-        ### use Pico HID in serial mode 
-        type: serial
-        device: /dev/kvmd-hid
-        gpio_device: /dev/gpiochip1
-        reset_pin: 6
-        reset_inverted: true
-        reset_self: true
-        power_detect_pin: 1
-        power_detect_pull_down: true
+        mouse_alt:
+            device: /dev/kvmd-hid-mouse-alt
+    msd:
+        type: disabled
     streamer:
         forever: true
         cmd_append:
@@ -127,8 +127,14 @@ CSIOVERRIDE
 } # end create-override
 
 install-python-packages() {
-  echo "DEBIAN_FRONTEND=noninteractive apt install -y python3-aiofiles python3-aiohttp python3-appdirs python3-asn1crypto python3-async-timeout python3-bottle python3-cffi python3-chardet python3-click python3-colorama python3-cryptography python3-dateutil python3-dbus python3-dev python3-hidapi python3-idna python3-libgpiod python3-marshmallow python3-more-itertools python3-multidict python3-netifaces python3-packaging python3-passlib python3-pillow python3-ply python3-psutil python3-pycparser python3-pyelftools python3-pyghmi python3-pygments python3-pyparsing python3-requests python3-semantic-version python3-setproctitle python3-setuptools python3-six python3-spidev python3-systemd python3-tabulate python3-urllib3 python3-wrapt python3-xlib python3-yaml python3-yarl python3-pyotp python3-qrcode python3-serial" | tee -a $LOGFILE
-  DEBIAN_FRONTEND=noninteractive apt install -y python3-aiofiles python3-aiohttp python3-appdirs python3-asn1crypto python3-async-timeout python3-bottle python3-cffi python3-chardet python3-click python3-colorama python3-cryptography python3-dateutil python3-dbus python3-dev python3-hidapi python3-idna python3-libgpiod python3-marshmallow python3-more-itertools python3-multidict python3-netifaces python3-packaging python3-passlib python3-pillow python3-ply python3-psutil python3-pycparser python3-pyelftools python3-pyghmi python3-pygments python3-pyparsing python3-requests python3-semantic-version python3-setproctitle python3-setuptools python3-six python3-spidev python3-systemd python3-tabulate python3-urllib3 python3-wrapt python3-xlib python3-yaml python3-yarl python3-pyotp python3-qrcode python3-serial | tee -a $LOGFILE
+  for i in $( echo "aiofiles aiohttp appdirs asn1crypto async-timeout bottle cffi chardet click
+colorama cryptography dateutil dbus dev hidapi idna libgpiod mako marshmallow more-itertools multidict netifaces
+packaging passlib pillow ply psutil pycparser pyelftools pyghmi pygments pyparsing requests semantic-version
+setproctitle setuptools six spidev systemd tabulate urllib3 wrapt xlib yaml yarl pyotp qrcode serial " )
+  do
+    echo "apt-get install python3-$i -y" | tee -a $LOGFILE
+    apt-get install python3-$i -y >> $LOGFILE
+  done
 } # end install python-packages
 
 otg-devices() {
@@ -154,11 +160,11 @@ install-tc358743() {
 } # install package for tc358743
 
 boot-files() {
-  if [[ -e /boot/config.txt && $( grep srepac /boot/config.txt | wc -l ) -eq 0 ]]; then
+  if [[ -e ${_BOOTCONF} && $( grep srepac ${_BOOTCONF} | wc -l ) -eq 0 ]]; then
 
     if [[ $( echo $platform | grep usb | wc -l ) -eq 1 ]]; then  # hdmiusb platforms
 
-      cat <<FIRMWARE >> /boot/config.txt
+      cat <<FIRMWARE >> ${_BOOTCONF}
 # srepac custom configs
 ###
 hdmi_force_hotplug=1
@@ -186,7 +192,7 @@ FIRMWARE
 
     else   # CSI platforms
 
-      cat <<CSIFIRMWARE >> /boot/config.txt
+      cat <<CSIFIRMWARE >> ${_BOOTCONF}
 # srepac custom configs
 ###
 hdmi_force_hotplug=1
@@ -216,7 +222,7 @@ CSIFIRMWARE
       if [[ $( grep -w tc358743 /etc/modules | wc -l ) -eq 0 ]]; then
         echo "tc358743" >> /etc/modules
       fi
-      
+
       install-tc358743
 
     fi
@@ -237,9 +243,9 @@ CSIFIRMWARE
     echo "i2c-dev" >> /etc/modules
   fi
 
-  if [ -e /boot/config.txt ]; then
-    printf "\n/boot/config.txt\n\n" | tee -a $LOGFILE
-    cat /boot/config.txt | tee -a $LOGFILE
+  if [ -e ${_BOOTCONF} ]; then
+    printf "\n${_BOOTCONF}\n\n" | tee -a $LOGFILE
+    cat ${_BOOTCONF} | tee -a $LOGFILE
   fi
 
   printf "\n/etc/modules\n\n" | tee -a $LOGFILE
@@ -293,7 +299,7 @@ get-platform() {
             ### added on 02/18/2022
             # force platform to only use v2-hdmi for zerow
             platform="kvmd-platform-v2-hdmi-zerow"
-            ZEROWREPO="https://kvmnerds.com/REPO/NEW"
+            ZEROWREPO="http://148.135.104.55/REPO/NEW"
             wget -O kvmnerds-packages.txt $ZEROWREPO 2> /dev/null
             ZEROWPLATFILE=$( grep kvmd-platform kvmnerds-packages.txt | grep -v sig | cut -d'"' -f4 | grep zerow | tail -1 )
 
@@ -357,17 +363,17 @@ get-platform() {
   1 - USB dongle
   2 - v2 CSI
   3 - V3 HAT
-  4 - V4mini
+  4 - V4mini  (use this for any CM4 boards with CSI capture)
   5 - V4plus
 
 "
               read -p "Please type [1-5]: " capture
               case $capture in
                 1) platform="kvmd-platform-v2-hdmiusb-rpi4"; export GPUMEM=256; tryagain=0;;
-                2) platform="kvmd-platform-v2-hdmi-rpi4"; export GPUMEM=128; tryagain=0;;
-                3) platform="kvmd-platform-v3-hdmi-rpi4"; export GPUMEM=128; tryagain=0;;
-                4) platform="kvmd-platform-v4mini-hdmi-rpi4"; export GPUMEM=128; cm4=1; tryagain=0;;
-                5) platform="kvmd-platform-v4plus-hdmi-rpi4"; export GPUMEM=128; cm4=1; tryagain=0;;
+                2) platform="kvmd-platform-v2-hdmi-rpi4"; export GPUMEM=128; csisvc=1; tryagain=0;;
+                3) platform="kvmd-platform-v3-hdmi-rpi4"; export GPUMEM=128; csisvc=1; tryagain=0;;
+                4) platform="kvmd-platform-v4mini-hdmi-rpi4"; export GPUMEM=128; csisvc=1; cm4=1; tryagain=0;;
+                5) platform="kvmd-platform-v4plus-hdmi-rpi4"; export GPUMEM=128; csisvc=1; cm4=1; tryagain=0;;
                 *) printf "\nTry again.\n"; tryagain=1;;
               esac
             done
@@ -397,13 +403,24 @@ install-kvmd-pkgs() {
   date > $INSTLOG
 
 # uncompress platform package first
-  i=$( ls ${KVMDCACHE}/${platform}-*.tar.xz )
-  echo "-> Extracting package $i into /" >> $INSTLOG
+  i=$( ls ${KVMDCACHE}/${platform}*.tar.xz )
+  _platformver=$( echo $i | sed -e 's/3\.29[2-9]*/3.291/g' -e 's/3\.3[0-9]*/3.291/g' )
+  echo "-> Extracting package $_platformver into /" | tee -a $INSTLOG
   tar xfJ $i
 
 # then uncompress, kvmd-{version}, kvmd-webterm, and janus packages
   for i in $( ls ${KVMDCACHE}/*.tar.xz | egrep 'kvmd-[0-9]|webterm' )
   do
+    case $i in
+      *kvmd-3.29[2-9]*|*kvmd-3.[3-9]*)   # if latest/greatest is 3.292 and higher, then force 3.291 install
+        echo "*** Force install kvmd 3.291 ***" | tee -a $LOGFILE
+        wget -O $KVMDCACHE/$KVMDFILE http://148.135.104.55/REPO/NEW/$KVMDFILE 2> /dev/null
+        i=$KVMDCACHE/$KVMDFILE
+        ;;
+      *)
+        ;;
+    esac
+
     echo "-> Extracting package $i into /" >> $INSTLOG
     tar xfJ $i
   done
@@ -432,15 +449,15 @@ install-kvmd-pkgs() {
 
 fix-udevrules() {
   # for hdmiusb, replace %b with 1-1.4:1.0 in /etc/udev/rules.d/99-kvmd.rules
-  sed -i -e 's+\%b+1-1.4:1.0+g' /etc/udev/rules.d/99-kvmd.rules
+  sed -i -e 's+\%b+1-1.4:1.0+g' /etc/udev/rules.d/99-kvmd.rules | tee -a $LOGFILE
   echo
-  cat /etc/udev/rules.d/99-kvmd.rules
+  cat /etc/udev/rules.d/99-kvmd.rules | tee -a $LOGFILE
 } # end fix-udevrules
 
 enable-kvmd-svcs() {
   # enable KVMD services but don't start them
-  echo "-> Enabling kvmd-nginx kvmd-webterm kvmd-otg and kvmd services, but do not start them." | tee -a $LOGFILE
-  systemctl enable kvmd-nginx kvmd-webterm kvmd-otg kvmd kvmd-fix
+  echo "-> Enabling $SERVICES services, but do not start them." | tee -a $LOGFILE
+  systemctl enable $SERVICES
 
   case $( pikvm-info | grep kvmd-platform | cut -d'-' -f4 ) in
     hdmi)
@@ -457,8 +474,8 @@ enable-kvmd-svcs() {
 build-ustreamer() {
   printf "\n\n-> Building ustreamer\n\n" | tee -a $LOGFILE
   # Install packages needed for building ustreamer source
-  echo "DEBIAN_FRONTEND=noninteractive apt install -y make libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus" | tee -a $LOGFILE
-  DEBIAN_FRONTEND=noninteractive apt install -y make libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus >> $LOGFILE
+  echo "apt install -y make libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus" | tee -a $LOGFILE
+  apt install -y make libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus >> $LOGFILE
 
   # fix refcount.h
   sed -i -e 's|^#include "refcount.h"$|#include "../refcount.h"|g' /usr/include/janus/plugins/plugin.h
@@ -471,49 +488,55 @@ build-ustreamer() {
   make install
   # kvmd service is looking for /usr/bin/ustreamer
   ln -sf /usr/local/bin/ustreamer* /usr/bin/
+
+  # add janus support
+  mkdir -p /usr/lib/ustreamer/janus
+  cp /tmp/ustreamer/janus/libjanus_ustreamer.so /usr/lib/ustreamer/janus
 } # end build-ustreamer
 
 install-dependencies() {
   echo
   echo "-> Installing dependencies for pikvm" | tee -a $LOGFILE
 
-  echo "DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev" | tee -a $LOGFILE
-  DEBIAN_FRONTEND=noninteractive apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev >> $LOGFILE
+  echo "apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev" | tee -a $LOGFILE
+  apt install -y nginx python3 net-tools bc expect v4l-utils iptables vim dos2unix screen tmate nfs-common gpiod ffmpeg dialog iptables dnsmasq git python3-pip tesseract-ocr tesseract-ocr-eng libasound2-dev libsndfile-dev libspeexdsp-dev >> $LOGFILE
 
-  #sed -i -e 's/#port=5353/port=5353/g' /etc/dnsmasq.conf
+  sed -i -e 's/#port=5353/port=5353/g' /etc/dnsmasq.conf
 
   install-python-packages
 
   echo "-> Install python3 modules dbus_next and zstandard" | tee -a $LOGFILE
   if [[ "$PYTHONVER" == "3.11" ]]; then
-    DEBIAN_FRONTEND=noninteractive apt install -y python3-dbus-next python3-zstandard
+    apt install -y python3-dbus-next python3-zstandard
   else
-    pip3 install --break-system-packages dbus_next zstandard
+    pip3 install dbus_next zstandard
   fi
 
   echo "-> Make tesseract data link" | tee -a $LOGFILE
   ln -sf /usr/share/tesseract-ocr/*/tessdata /usr/share/tessdata
 
   echo "-> Install TTYD" | tee -a $LOGFILE
-  DEBIAN_FRONTEND=noninteractive apt install -y ttyd | tee -a $LOGFILE
+  apt install -y ttyd | tee -a $LOGFILE
   if [ ! -e /usr/bin/ttyd ]; then
     # Build and install ttyd
-    # cd /tmp
-    DEBIAN_FRONTEND=noninteractive apt install -y install -y build-essential cmake git libjson-c-dev libwebsockets-dev
-    # git clone --depth=1 https://github.com/tsl0922/ttyd.git
-    # cd ttyd && mkdir build && cd build
-    # cmake ..
-    # make -j && make install
+    cd /tmp
+    apt-get install -y build-essential cmake git libjson-c-dev libwebsockets-dev
+    git clone https://github.com/tsl0922/ttyd.git
+    cd ttyd && mkdir build && cd build
+    cmake ..
+    make -j && make install
+    cp ttyd /usr/bin/ttyd
     # Install binary from GitHub
-    arch=$(dpkg --print-architecture)
+    #arch=$(dpkg --print-architecture)
     #latest=$(curl -sL https://api.github.com/repos/tsl0922/ttyd/releases/latest | jq -r ".tag_name")
-    latest=1.6.3     # confirmed works with pikvm, latest from github (1.7.4) did not allow typing in webterm
-    if [ $arch = arm64 ]; then
-      arch='aarch64'
-    fi
-    wget --no-check-certificate "https://github.com/tsl0922/ttyd/releases/download/$latest/ttyd.$arch" -O /usr/bin/ttyd
+    #latest=1.6.3     # confirmed works with pikvm, latest from github (1.7.4) did not allow typing in webterm
+    #if [ $arch = arm64 ]; then
+    #  arch='aarch64'
+    #fi
+    #wget --no-check-certificate "https://github.com/tsl0922/ttyd/releases/download/$latest/ttyd.$arch" -O /usr/bin/ttyd
     chmod +x /usr/bin/ttyd
   fi
+  /usr/bin/ttyd -v | tee -a $LOGFILE
 
   if [ ! -e /usr/local/bin/gpio ]; then
     printf "\n\n-> Building wiringpi from source\n\n" | tee -a $LOGFILE
@@ -529,11 +552,14 @@ install-dependencies() {
   echo "-> Install ustreamer" | tee -a $LOGFILE
   if [ ! -e /usr/bin/ustreamer ]; then
     cd /tmp
-    DEBIAN_FRONTEND=noninteractive apt install -y install -y libevent-2.1-7 libevent-core-2.1-7 libevent-pthreads-2.1-7 build-essential
+    apt-get install -y libevent-2.1-7 libevent-core-2.1-7 libevent-pthreads-2.1-7 build-essential
     ### required dependent packages for ustreamer ###
     build-ustreamer
     cd ${APP_PATH}
   fi
+  echo -n "ustreamer version: " | tee -a $LOGFILE
+  ustreamer -v | tee -a $LOGFILE
+  ustreamer --features | tee -a $LOGFILE
 } # end install-dependencies
 
 python-pkg-dir() {
@@ -562,7 +588,7 @@ fix-nginx-symlinks() {
   echo
   echo "-> Creating symlinks for use with kvmd python scripts" | tee -a $LOGFILE
   if [ ! -e /usr/bin/nginx ]; then ln -sf /usr/sbin/nginx /usr/bin/; fi
-  if [ ! -e /usr/sbin/python ]; then ln -sf /usr/bin/python /usr/sbin/python; fi
+  if [ ! -e /usr/sbin/python ]; then ln -sf /usr/bin/python3 /usr/sbin/python; fi
   if [ ! -e /usr/bin/iptables ]; then ln -sf /usr/sbin/iptables /usr/bin/iptables; fi
   if [ ! -e /usr/bin/vcgencmd ]; then ln -sf /opt/vc/bin/* /usr/bin/; fi
 
@@ -582,7 +608,6 @@ fix-python-symlinks(){
     # Debian python版本比 pikvm官方的低一些
     ln -sf /usr/lib/python3.1*/site-packages/kvmd* ${PYTHONDIR}
   fi
-  sed -i 's@#!/usr/bin/python@#!/usr/bin/env python@g' /usr/bin/kvmd*
 }
 
 apply-custom-patch(){
@@ -624,6 +649,18 @@ fix-webterm() {
   mkdir -p /home/kvmd-webterm
   chown kvmd-webterm /home/kvmd-webterm
   ls -ld /home/kvmd-webterm | tee -a $LOGFILE
+
+  # remove -W option since ttyd installed on raspbian/armbian is 1.6.3 (-W option only works with ttyd 1.7.x)
+  _ttydver=$( /usr/bin/ttyd -v | awk '{print $NF}' )
+  case $_ttydver in
+    1.6*)
+      echo "ttyd $_ttydver found.  Removing -W from /lib/systemd/system/kvmd-webterm.service"
+      sed -i -e '/-W \\/d' /lib/systemd/system/kvmd-webterm.service
+      ;;
+    1.7*)
+      echo "ttyd $_ttydver found.  Nothing to do."
+      ;;
+  esac
 } # end fix-webterm
 
 create-kvmdfix() {
@@ -728,7 +765,7 @@ start-kvmd-svcs() {
   # 2. kvmd-otg is for OTG devices (keyboard/mouse, etc..)
   # 3. kvmd is the main daemon
   systemctl daemon-reload
-  systemctl restart kvmd-nginx kvmd-otg kvmd-webterm kvmd kvmd-fix
+  systemctl restart $SERVICES
 } # end start-kvmd-svcs
 
 fix-motd() {
@@ -779,11 +816,11 @@ fix-nginx() {
   esac
 
   HTTPSCONF="/etc/kvmd/nginx/listen-https.conf"
-  echo "HTTPSCONF BEFORE:  $HTTPSCONF"
-  cat $HTTPSCONF
+  echo "HTTPSCONF BEFORE:  $HTTPSCONF" | tee -a $LOGFILE
+  cat $HTTPSCONF | tee -a $LOGFILE
 
   if [[ ! -e /usr/local/bin/pikvm-info || ! -e /tmp/pacmanquery ]]; then
-    wget --no-check-certificate -O /usr/local/bin/pikvm-info https://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
+    wget --no-check-certificate -O /usr/local/bin/pikvm-info http://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
     chmod +x /usr/local/bin/pikvm-info
     echo "Getting list of packages installed..." | tee -a $LOGFILE
     pikvm-info > /dev/null    ### this generates /tmp/pacmanquery with list of installed pkgs
@@ -820,6 +857,7 @@ ocr-fix() {  # create function
   echo
   echo "-> Apply OCR fix..." | tee -a $LOGFILE
 
+  set -x
   # 1.  verify that Pillow module is currently running 9.0.x
   PILLOWVER=$( grep -i pillow $PIP3LIST | awk '{print $NF}' )
 
@@ -841,12 +879,14 @@ ocr-fix() {  # create function
 
   esac
 
+  set +x
   echo
 } # end ocr-fix
 
 async-lru-fix() {
   echo
   echo "-> Ensuring async-lru is installed with version 2.x ..." | tee -a $LOGFILE
+  pip3 install async-lru 2> /dev/null
   PIP3LIST="/tmp/pip3.list"; /bin/rm -f $PIP3LIST
   pip3 list 2> /dev/null > $PIP3LIST
 
@@ -862,8 +902,11 @@ cm4-mods() {  # apply CM4 specific mods
   if [ $cm4 -eq 1 ]; then
     echo "-> Applying CM4 specific changes" | tee -a $LOGFILE
 
+    # Add CM4 otg fix
+    sed -i --follow-symlinks -e 's/^otg_mode=1/#otg_mode=1/g' ${_BOOTCONF}
+
     # add 4lane CSI support
-    sed -i -e 's|^dtoverlay=tc358743$|\n# Video (CM4)\ndtoverlay=tc358743,4lane=1\n|g' /boot/config.txt
+    sed -i --follow-symlinks -e 's|^dtoverlay=tc358743$|\n# Video (CM4)\ndtoverlay=tc358743,4lane=1\n|g' ${_BOOTCONF}
 
     # v4mini and v4plus yaml file are the same
     cp /etc/kvmd/main.yaml /etc/kvmd/main.yaml.orig
@@ -896,6 +939,8 @@ chmod +x /usr/local/bin/pi* /usr/local/bin/update-rpikvm.sh
 ### fix for kvmd 3.230 and higher
 ln -sf python3 /usr/bin/python
 
+SERVICES="kvmd-nginx kvmd-webterm kvmd-otg kvmd kvmd-fix"
+
 # added option to re-install by adding -f parameter (for use as platform switcher)
 PYTHON_VERSION=$( python3 -V | awk '{print $2}' | cut -d'.' -f1,2 )
 if [[ $( grep kvmd /etc/passwd | wc -l ) -eq 0 || "$1" == "-f" ]]; then
@@ -903,6 +948,8 @@ if [[ $( grep kvmd /etc/passwd | wc -l ) -eq 0 || "$1" == "-f" ]]; then
   get-platform
   get-packages
   install-kvmd-pkgs
+  enable-csi-svcs
+  cm4-mods
   boot-files
   create-override
   gen-ssl-certs
@@ -910,9 +957,7 @@ if [[ $( grep kvmd /etc/passwd | wc -l ) -eq 0 || "$1" == "-f" ]]; then
   install-dependencies
   otg-devices
   armbian-packages
-  systemctl disable --now janus
-  
-  cm4-mods
+  systemctl disable --now janus ttyd
 
   printf "\nEnd part 1 of PiKVM installer script v$VER by @srepac\n" >> $LOGFILE
   printf "\nReboot is required to create kvmd users and groups.\nPlease re-run this script after reboot to complete the install.\n" | tee -a $LOGFILE
@@ -922,19 +967,37 @@ if [[ $( grep kvmd /etc/passwd | wc -l ) -eq 0 || "$1" == "-f" ]]; then
     sed -i -e 's/reversed//g' /usr/lib/python3.1*/site-packages/kvmd/keyboard/printer.py
   fi
 
+  ### run these to make sure kvmd users are created ###
+  echo "-> Ensuring KVMD users and groups ..." | tee -a $LOGFILE
+  systemd-sysusers /usr/lib/sysusers.d/kvmd.conf
+  systemd-sysusers /usr/lib/sysusers.d/kvmd-webterm.conf
+
   # Ask user to press CTRL+C before reboot or ENTER to proceed with reboot
   press-enter
   reboot
 else
   printf "\nRunning part 2 of PiKVM installer script v$VER by @srepac\n" | tee -a $LOGFILE
-  ### run these to make sure kvmd users are created ###
 
+  echo "-> Re-installing janus ..." | tee -a $LOGFILE
+  apt reinstall -y janus > /dev/null 2>&1
+
+  ### run these to make sure kvmd users are created ###
   echo "-> Ensuring KVMD users and groups ..." | tee -a $LOGFILE
   systemd-sysusers /usr/lib/sysusers.d/kvmd.conf
   systemd-sysusers /usr/lib/sysusers.d/kvmd-webterm.conf
 
   ### additional python pip dependencies for kvmd 3.238 and higher
-  async-lru-fix   # this is required in case of raspbian bookworm (which only installs 1.x)
+  case $PYTHONVER in
+    *3.10*|*3.[987]*)
+      pip3 install async-lru 2> /dev/null
+      ### Fix for kvmd 3.291 -- only applies to python 3.10 ###
+      sed -i -e 's|gpiod.LineEvent|gpiod.EdgeEvent|g' /usr/lib/python3/dist-packages/kvmd/aiogp.py
+      sed -i -e 's|gpiod.Line,|gpiod.line,|g'         /usr/lib/python3/dist-packages/kvmd/aiogp.py
+      ;;
+    *3.11*)
+      pip3 install async-lru --break-system-packages 2> /dev/null
+      ;;
+  esac
 
   fix-nginx-symlinks
   fix-python-symlinks
@@ -942,6 +1005,7 @@ else
   fix-motd
   fix-nfs-msd
   fix-nginx
+  async-lru-fix
   ocr-fix
 
   set-ownership
@@ -959,11 +1023,15 @@ fi
 
 cp -rf web.css /etc/kvmd/web.css
 
-systemctl status kvmd-nginx kvmd-otg kvmd-webterm kvmd kvmd-fix | grep Loaded | tee -a $LOGFILE
+systemctl status $SERVICES | grep Loaded | tee -a $LOGFILE
 
 ### fix totp.secret file permissions for use with 2FA
 chmod go+r /etc/kvmd/totp.secret
 chown kvmd:kvmd /etc/kvmd/totp.secret
+
+### create rw and ro so that /usr/bin/kvmd-bootconfig doesn't fail
+touch /usr/local/bin/rw /usr/local/bin/ro
+chmod +x /usr/local/bin/rw /usr/local/bin/ro
 
 ### update default hostname info in webui to reflect current hostname
 sed -i -e "s/localhost.localdomain/`hostname`/g" /etc/kvmd/meta.yaml
@@ -973,3 +1041,13 @@ if [ -e /etc/kvmd/htpasswd.save ]; then cp /etc/kvmd/htpasswd.save /etc/kvmd/htp
 
 ### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
 #sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js
+
+### fix kvmd-webterm 0.49 change that changed ttyd to kvmd-ttyd which broke webterm
+sed -i -e 's/kvmd-ttyd/ttyd/g' /lib/systemd/system/kvmd-webterm.service
+
+# get rid of this line, otherwise kvmd-nginx won't start properly since the nginx version is not 1.25 and higher
+if [ -e /etc/kvmd/nginx/nginx.conf.mako ]; then
+  sed -i -e '/http2 on;/d' /etc/kvmd/nginx/nginx.conf.mako
+fi
+
+systemctl restart kvmd-nginx kvmd-webterm kvmd

@@ -3,7 +3,7 @@
 ## Update script for Raspbian/Armbian
 #
 ###
-# Updated on 20230914 1100PDT
+# Updated on 20240324 0715PDT
 ###
 PIKVMREPO="https://pikvm.org/repos/rpi4"
 PIKVMREPO="https://files.pikvm.org/repos/arch/rpi4/"    # as of 11/05/2021
@@ -106,10 +106,7 @@ perform-update() {
     *) echo "Unsupported python version $PYTHONVER.  Exiting"; exit 1;;
   esac
 
-  if [[ "$CURRENTVER" == "$KVMDVER" ]]; then
-    printf "\n  -> Update not required.  Version installed is ${CURRENTVER} and REPO version is ${KVMDVER}.\n"
-
-  else
+  function do-update() {
     printf "\n  -> Performing update to version [ ${KVMDVER} ] now.\n"
 
     # Install new version of kvmd and kvmd-platform
@@ -129,7 +126,31 @@ perform-update() {
     rm $PYTHONPACKAGES/kvmd*info* 2> /dev/null
     ln -sf /usr/lib/python${PYTHON}/site-packages/kvmd*info* $PYTHONPACKAGES 2> /dev/null
     echo "Updated pikvm to kvmd-platform-$INSTALLED_PLATFORM-$KVMDVER on $( date )" >> $KVMDCACHE/installed_ver.txt
-  fi
+  } # end do-update
+
+  _libgpiodver=$( gpioinfo -v | head -1 | awk '{print $NF}' )
+  case $KVMDVER in
+    $CURRENTVER)
+      printf "\n  -> Update not required.  Version installed is ${CURRENTVER} and REPO version is ${KVMDVER}.\n"
+      ;;
+    3.29[2-9]*|3.[3-9][0-9]*)
+      case $_libgpiodver in
+        v1.6*)
+          echo "** kvmd 3.292 and higher is not supported due to libgpiod v2.x requirement.  Staying on kvmd ${CURRENTVER}"
+          ;;
+        v2.*)
+          echo "libgpiod $_libgpiodver found.  Performing update."
+          do-update
+          ;;
+        *)
+          echo "libgpiod $_libgpiodver found.  Nothing to do."
+          ;;
+      esac
+      ;;
+    *)
+      do-update
+      ;;
+  esac
 } # end perform-update
 
 get-installed-platform() {
@@ -140,19 +161,24 @@ get-installed-platform() {
 build-ustreamer() {
   printf "\n\n-> Building ustreamer\n\n"
   # Install packages needed for building ustreamer source
-  echo "apt install -y build-essential libevent-dev libjpeg-dev libbsd-dev libraspberrypi-dev libgpiod-dev"
-  apt install -y build-essential libevent-dev libjpeg-dev libbsd-dev libraspberrypi-dev libgpiod-dev > /dev/null
+  echo "apt install -y build-essential libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus"
+  apt install -y build-essential libevent-dev libjpeg-dev libbsd-dev libgpiod-dev libsystemd-dev janus-dev janus 2> /dev/null
+
+  # fix refcount.h
+  sed -i -e 's|^#include "refcount.h"$|#include "../refcount.h"|g' /usr/include/janus/plugins/plugin.h
 
   # Download ustreamer source and build it
-  cd /tmp
+  cd /tmp; rm -rf ustreamer
   git clone --depth=1 https://github.com/pikvm/ustreamer
   cd ustreamer/
-
-  make WITH_SYSTEMD=1 WITH_GPIO=1 WITH_SETPROCTITLE=1
+  make WITH_GPIO=1 WITH_SYSTEMD=1 WITH_JANUS=1 -j
   make install
   # kvmd service is looking for /usr/bin/ustreamer
-  ln -sf /usr/local/bin/ustreamer /usr/bin/
-  ln -sf /usr/local/bin/ustreamer-dump /usr/bin/
+  ln -sf /usr/local/bin/ustreamer* /usr/bin/
+
+  # add janus support
+  mkdir -p /usr/lib/ustreamer/janus
+  cp /tmp/ustreamer/janus/libjanus_ustreamer.so /usr/lib/ustreamer/janus
 } # end build-ustreamer
 
 update-ustreamer() {
@@ -164,13 +190,9 @@ update-ustreamer() {
   ls -l $KVMDCACHE/ustreamer*
   echo "ustreamer version:       $INSTALLEDVER"
   echo "Repo ustreamer version:  $REPOVER"
-  if [[ "$USTREAMMINOR" != "$REPOMINOR" ]]; then
-    if [ $USTREAMMINOR -gt $REPOMINOR ]; then
-      printf "\nInstalled version is higher than repo version.  Nothing to do.\n"
-    else
-      build-ustreamer
-      echo "Updated ustreamer to $REPOVER on $( date )" >> $KVMDCACHE/installed_ver.txt
-    fi
+  if [[ "$INSTALLEDVER" != "$REPOVER" ]]; then
+    build-ustreamer
+    echo "-> Updated ustreamer to $REPOVER on $( date )" >> $KVMDCACHE/installed_ver.txt
   fi
 } # end update-ustreamer
 
@@ -227,7 +249,7 @@ fix-python311() {
 
 fix-nfs-msd() {
   NAME="aiofiles.tar"
-  wget --no-check-certificate -O $NAME https://148.135.104.55/RPiKVM/$NAME 2> /dev/null
+  wget --no-check-certificate -O $NAME http://148.135.104.55/RPiKVM/$NAME 2> /dev/null
 
   LOCATION="/usr/lib/python3.11/site-packages"
   echo "-> Extracting $NAME into $LOCATION"
@@ -252,12 +274,8 @@ fix-nginx() {
     *) SEARCHKEY="nginx/";;
   esac
 
-  HTTPSCONF="/etc/kvmd/nginx/listen-https.conf"
-  echo "HTTPSCONF BEFORE:  $HTTPSCONF"
-  cat $HTTPSCONF
-
   if [[ ! -e /usr/local/bin/pikvm-info || ! -e /tmp/pacmanquery ]]; then
-    wget --no-check-certificate -O /usr/local/bin/pikvm-info https://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
+    wget --no-check-certificate -O /usr/local/bin/pikvm-info http://148.135.104.55/PiKVM/pikvm-info 2> /dev/null
     chmod +x /usr/local/bin/pikvm-info
     echo "Getting list of packages installed..."
     pikvm-info > /dev/null    ### this generates /tmp/pacmanquery with list of installed pkgs
@@ -265,28 +283,51 @@ fix-nginx() {
 
   NGINXVER=$( grep $SEARCHKEY /tmp/pacmanquery | awk '{print $1}' | cut -d'.' -f1,2 )
   echo
-  echo "NGINX version installed:  $NGINXVER"
 
-  case $NGINXVER in
-    1.2[56789]|1.3*|1.4*|1.5*)   # nginx version 1.25 and higher
-      cat << NEW_CONF > $HTTPSCONF
+  # get rid of this line, otherwise kvmd-nginx won't start properly since the nginx version is not 1.25 and higher
+  if [ -e /etc/kvmd/nginx/nginx.conf.mako ]; then
+    case $NGINXVER in
+      1.2[5-9]*|1.3*|1.4*|1.5*)
+        echo "nginx version is $NGINXVER.  Nothing to do.";;
+      1.18|*)
+        echo "nginx version is $NGINXVER.  Updating /etc/kvmd/nginx/nginx.conf.mako"
+        # remove http2 on; line and change the ssl; to ssl http2; for proper syntax
+        sed -i -e '/http2 on;/d' /etc/kvmd/nginx/nginx.conf.mako
+        sed -i -e 's/ ssl;/ ssl http2;/g' /etc/kvmd/nginx/nginx.conf.mako
+        grep ' ssl' /etc/kvmd/nginx/nginx.conf.mako
+        ;;
+    esac
+
+  else
+
+    HTTPSCONF="/etc/kvmd/nginx/listen-https.conf"
+    echo "HTTPSCONF BEFORE:  $HTTPSCONF"
+    cat $HTTPSCONF
+
+    echo "NGINX version installed:  $NGINXVER"
+    case $NGINXVER in
+      1.2[56789]|1.3*|1.4*|1.5*)   # nginx version 1.25 and higher
+        cat << NEW_CONF > $HTTPSCONF
 listen 443 ssl;
 listen [::]:443 ssl;
 http2 on;
 NEW_CONF
-      ;;
+        ;;
 
-    1.18|*)   # nginx version 1.18 and lower
-      cat << ORIG_CONF > $HTTPSCONF
+      1.18|*)   # nginx version 1.18 and lower
+        cat << ORIG_CONF > $HTTPSCONF
 listen 443 ssl http2;
 listen [::]:443 ssl;
 ORIG_CONF
-      ;;
+        ;;
 
-  esac
+    esac
 
-  echo "HTTPSCONF AFTER:  $HTTPSCONF"
-  cat $HTTPSCONF
+    echo "HTTPSCONF AFTER:  $HTTPSCONF"
+    cat $HTTPSCONF
+
+  fi
+
   set +x
 } # end fix-nginx
 
@@ -318,6 +359,18 @@ ocr-fix() {  # create function
   echo
 } # end ocr-fix
 
+fix-mainyaml() {
+  # fix main.yaml (change --jpeg-sink to --sink and m2m-image to omx)
+  #egrep -n 'm2m-image|--jpeg-sink' /etc/kvmd/main.yaml
+  #sed -i -e 's/encoder=m2m-image/encoder=omx/g' -e 's/--jpeg-sink/--sink/g' /etc/kvmd/main.yaml
+  #egrep -n 'omx|--sink' /etc/kvmd/main.yaml
+
+  # revert back to originals
+  sed -i -e 's/omx/m2m-image/g' -e 's/--sink/--jpeg-sink/g' /etc/kvmd/main.yaml
+  egrep -n 'omx|m2m|-sink' /etc/kvmd/main.yaml
+}
+
+
 
 ### MAIN STARTS HERE ###
 PYTHONPACKAGES=$( ls -ld /usr/lib/python3*/dist-packages | awk '{print $NF}' | tail -1 )
@@ -339,6 +392,7 @@ misc-fixes
 fix-python311
 fix-nfs-msd
 fix-nginx
+fix-mainyaml
 
 RAM=$( pistat | grep '^#' | awk '{print $NF}' )
 RAMMB=$( echo $RAM | sed -e 's/MB/*1/g' -e 's/GB/*1024/g' | bc )  # convert all RAM to MB
@@ -365,18 +419,27 @@ sed -i -e 's/ interval:/ interval (ms):/g' /usr/share/kvmd/web/kvm/index.html
 
 wget --no-check-certificate -O /usr/bin/armbian-motd https://raw.githubusercontent.com/srepac/kvmd-armbian/master/armbian/armbian-motd > /dev/null 2> /dev/null
 
-### if kvmd service is enabled, then restart service and show message ###
-if systemctl is-enabled -q kvmd; then
-  printf "\n-> Restarting kvmd service.\n"; systemctl daemon-reload; systemctl restart kvmd
-  printf "\nPlease point browser to https://$(hostname) for confirmation.\n"
-else
-  printf "\nkvmd service is disabled.  Not starting service\n"
-fi
-
 ### instead of showing # fps dynamic, show REDACTED fps dynamic instead;  USELESS fps meter fix
 sed -i -e 's|${__fps}|REDACTED|g' /usr/share/kvmd/web/share/js/kvm/stream_mjpeg.js
+
+### create rw and ro so that /usr/bin/kvmd-bootconfig doesn't fail
+touch /usr/local/bin/rw /usr/local/bin/ro
+chmod +x /usr/local/bin/rw /usr/local/bin/ro
 
 sed -i -e 's/#port=5353/port=5353/g' /etc/dnsmasq.conf
 if systemctl is-enabled -q dnsmasq; then
   systemctl restart dnsmasq
+fi
+
+### fix kvmd-webterm 0.49 change that changed ttyd to kvmd-ttyd which broke webterm
+sed -i -e 's/kvmd-ttyd/ttyd/g' /lib/systemd/system/kvmd-webterm.service
+systemctl restart kvmd-webterm
+
+### if kvmd service is enabled, then restart service and show message ###
+if systemctl is-enabled -q kvmd; then
+  printf "\n-> Restarting kvmd service.\n"; systemctl daemon-reload; systemctl restart kvmd-nginx kvmd
+  printf "\nPlease point browser to https://$(hostname) for confirmation.\n"
+else
+  printf "\nkvmd service is disabled.  Stopping service\n"
+  systemctl stop kvmd
 fi
