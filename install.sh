@@ -127,14 +127,16 @@ CSIOVERRIDE
 } # end create-override
 
 install-python-packages() {
-  for i in $( echo "aiofiles aiohttp appdirs asn1crypto async-timeout bottle cffi chardet click
-colorama cryptography dateutil dbus dev hidapi idna libgpiod mako marshmallow more-itertools multidict netifaces
-packaging passlib pillow ply psutil pycparser pyelftools pyghmi pygments pyparsing requests semantic-version
-setproctitle setuptools six spidev systemd tabulate urllib3 wrapt xlib yaml yarl pyotp qrcode serial " )
-  do
-    echo "apt-get install python3-$i -y" | tee -a $LOGFILE
-    apt-get install python3-$i -y >> $LOGFILE
-  done
+#   for i in $( echo "aiofiles aiohttp appdirs asn1crypto async-timeout bottle cffi chardet click
+# colorama cryptography dateutil dbus dev hidapi idna libgpiod mako marshmallow more-itertools multidict netifaces
+# packaging passlib pillow ply psutil pycparser pyelftools pyghmi pygments pyparsing requests semantic-version
+# setproctitle setuptools six spidev systemd tabulate urllib3 wrapt xlib yaml yarl pyotp qrcode serial " )
+#   do
+#     echo "apt-get install python3-$i -y" | tee -a $LOGFILE
+#     apt-get install python3-$i -y >> $LOGFILE
+#   done
+     echo "DEBIAN_FRONTEND=noninteractive apt install -y python3-aiofiles python3-aiohttp python3-appdirs python3-asn1crypto python3-async-timeout python3-bottle python3-cffi python3-chardet python3-click python3-colorama python3-cryptography python3-dateutil python3-dbus python3-dev python3-hidapi python3-idna python3-libgpiod python3-marshmallow python3-more-itertools python3-multidict python3-netifaces python3-packaging python3-passlib python3-pillow python3-ply python3-psutil python3-pycparser python3-pyelftools python3-pyghmi python3-pygments python3-pyparsing python3-requests python3-semantic-version python3-setproctitle python3-setuptools python3-six python3-spidev python3-systemd python3-tabulate python3-urllib3 python3-wrapt python3-xlib python3-yaml python3-yarl python3-pyotp python3-qrcode python3-serial"
+   DEBIAN_FRONTEND=noninteractive apt install -y python3-aiofiles python3-aiohttp python3-appdirs python3-asn1crypto python3-async-timeout python3-bottle python3-cffi python3-chardet python3-click python3-colorama python3-cryptography python3-dateutil python3-dbus python3-dev python3-hidapi python3-idna python3-libgpiod python3-marshmallow python3-more-itertools python3-multidict python3-netifaces python3-packaging python3-passlib python3-pillow python3-ply python3-psutil python3-pycparser python3-pyelftools python3-pyghmi python3-pygments python3-pyparsing python3-requests python3-semantic-version python3-setproctitle python3-setuptools python3-six python3-spidev python3-systemd python3-tabulate python3-urllib3 python3-wrapt python3-xlib python3-yaml python3-yarl python3-pyotp python3-qrcode python3-serial
 } # end install python-packages
 
 otg-devices() {
